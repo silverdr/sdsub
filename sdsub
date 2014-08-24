@@ -18,7 +18,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #=Usage
-#  Usage: sd_sub [OPTION] ... FILE
+#  Usage: sdsub [OPTION] ... FILE
 #
 # -e <encoding>, --input-encoding <encoding>:
 #    specify input file encoding. For list of supported
@@ -623,12 +623,12 @@ infile.close
 
 if verification_requested || validation_requested
 	st_counter = 1
-	st_array.each do |subtitle|
+	st_array.each do |stitle|
 		# checking start versus end timecodes
-		if subtitle.tc_start.time >= subtitle.tc_end.time
+		if stitle.tc_start.time >= stitle.tc_end.time
 			printf(STDERR, "ERROR: subtitle #%d start vs. end timecode invalid", st_counter)
 			if validation_requested
-				subtitle.tc_end.time = subtitle.tc_start.time + 0.1
+				stitle.tc_end.time = stitle.tc_start.time + 0.1
 				printf(STDERR, "... Fixed.\n")
 				errors_fixed = true
 				redo
@@ -636,16 +636,16 @@ if verification_requested || validation_requested
 				printf("\n")
 			end
 		else
-			if subtitle.tc_end.time - subtitle.tc_start.time < 0.1
-				printf(STDERR, "WARNING: subtitle #%d duration of %.3fs seems too short!\n", st_counter, subtitle.tc_end.time - subtitle.tc_start.time)
+			if stitle.tc_end.time - stitle.tc_start.time < 0.1
+				printf(STDERR, "WARNING: subtitle #%d duration of %.3fs seems too short!\n", st_counter, stitle.tc_end.time - stitle.tc_start.time)
 			end
 		end
 		# checking display overlaps
 		unless st_counter > st_array.size - 2	# last element of the array (size = x, last index = x-1, one before last = x-2)
-			if subtitle.tc_end.time >= st_array[st_counter].tc_start.time
+			if stitle.tc_end.time >= st_array[st_counter].tc_start.time
 				printf(STDERR, "ERROR: subtitle #%d overlaps with subtitle #%d", st_counter, st_counter + 1)
 				if validation_requested
-					st_array[st_counter].tc_start.time = subtitle.tc_end.time + 0.05
+					st_array[st_counter].tc_start.time = stitle.tc_end.time + 0.05
 					printf(STDERR, "... Fixed.\n")
 					errors_fixed = true
 					redo
@@ -655,10 +655,10 @@ if verification_requested || validation_requested
 			end
 		end
 		# checking subtitle IDs
-		if subtitle.id != st_counter
-			printf(STDERR, "ERROR: subtitle ID out of order. Found %d, expected %d", subtitle.id, st_counter)
+		if stitle.id != st_counter
+			printf(STDERR, "ERROR: subtitle ID out of order. Found %d, expected %d", stitle.id, st_counter)
 			if validation_requested
-				subtitle.id = st_counter
+				stitle.id = st_counter
 				printf(STDERR, "... Fixed.\n")
 				errors_fixed = true
 				redo
@@ -673,17 +673,17 @@ end
 
 if normalise
 	st_counter = 1
-	st_array.each do |subtitle|
+	st_array.each do |stitle|
 		if st_counter <= st_array.size - 2	# not the last subtitle (size = x, last index = x-1, one before last = x-2)
-			if subtitle.tc_start.time + normalise >= st_array[st_counter].tc_start.time
+			if stitle.tc_start.time + normalise >= st_array[st_counter].tc_start.time
 				temp = st_array[st_counter].tc_start.time - 0.1
-				printf(STDERR, "WARNING: subtitle #%d not normalised to %fs. %fs used to avoid overlap\n", st_counter, normalise, temp - subtitle.tc_start.time)
-				subtitle.tc_end.time = temp
+				printf(STDERR, "WARNING: subtitle #%d not normalised to %fs. %fs used to avoid overlap\n", st_counter, normalise, temp - stitle.tc_start.time)
+				stitle.tc_end.time = temp
 			else
-				subtitle.tc_end.time = subtitle.tc_start.time + normalise
+				stitle.tc_end.time = stitle.tc_start.time + normalise
 			end
 		else
-			subtitle.tc_end.time = subtitle.tc_start.time + normalise
+			stitle.tc_end.time = stitle.tc_start.time + normalise
 		end
 		st_counter += 1
 	end
@@ -694,17 +694,17 @@ if char_duration
 		printf(STDERR, "WARNING: both 'normalise' and 'adaptive duration' requested. Normalisation will be overwritten.\n")
 	end
 	st_counter = 1
-	st_array.each do |subtitle|
+	st_array.each do |stitle|
 		if st_counter <= st_array.size - 2	# not the last subtitle (size = x, last index = x-1, one before last = x-2)
-			if subtitle.tc_start.time + subtitle.body.length * char_duration >= st_array[st_counter].tc_start.time
+			if stitle.tc_start.time + stitle.body.length * char_duration >= st_array[st_counter].tc_start.time
 				temp = st_array[st_counter].tc_start.time - 0.1
-				printf(STDERR, "WARNING: subtitle #%d not adapted. %fs used to avoid overlap\n", st_counter, temp - subtitle.tc_start.time)
-				subtitle.tc_end.time = temp
+				printf(STDERR, "WARNING: subtitle #%d not adapted. %fs used to avoid overlap\n", st_counter, temp - stitle.tc_start.time)
+				stitle.tc_end.time = temp
 			else
-				subtitle.tc_end.time = subtitle.tc_start.time + subtitle.body.length * char_duration
+				stitle.tc_end.time = stitle.tc_start.time + stitle.body.length * char_duration
 			end
 		else
-			subtitle.tc_end.time = subtitle.tc_start.time + subtitle.body.length * char_duration
+			stitle.tc_end.time = stitle.tc_start.time + stitle.body.length * char_duration
 		end
 		st_counter += 1
 	end
@@ -713,12 +713,12 @@ end
 # WARNING: not implemented yet! Code below is Boguś!
 if jiggle
 	st_counter = 1
-	st_array.each do |subtitle|
+	st_array.each do |stitle|
 		if st_array > 1	# not the first subtitle
 			jiggle_value = rand * jiggle
 			jiggle_value = -1 * jiggle_value if rand(2)
-			if subtitle.tc_start.time + jiggle_value <= st_array[st_counter - 2].tc_end.time
-				subtitle.tc_start.time = st_array[st_counter - 2].tc_end.time + 0.1
+			if stitle.tc_start.time + jiggle_value <= st_array[st_counter - 2].tc_end.time
+				stitle.tc_start.time = st_array[st_counter - 2].tc_end.time + 0.1
 			end
 		else
 		end
@@ -744,32 +744,32 @@ when 0
 	unless framerate_specified
 		printf(STDERR, "WARNING: Frame rate not specified for SUB/TXT output! Using default rate of: %d fps\n", framerate)
 	end
-	st_array.each do |subtitle|
-		subtitle.tc_start.time += shift
-		subtitle.tc_end.time += shift
+	st_array.each do |stitle|
+		stitle.tc_start.time += shift
+		stitle.tc_end.time += shift
 		if outencoding
-			printf(outfile, Iconv.conv(outencoding, "UTF-8", "{#{subtitle.tc_start.frame}}{#{subtitle.tc_end.frame}}"))
-			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", subtitle.attributedbody(outformat, newline) + newline))
+			printf(outfile, Iconv.conv(outencoding, "UTF-8", "{#{stitle.tc_start.frame}}{#{stitle.tc_end.frame}}"))
+			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", stitle.attributedbody(outformat, newline) + newline))
 		else
-			printf(outfile, "{#{subtitle.tc_start.frame}}{#{subtitle.tc_end.frame}}")
-			printf(outfile, "%s", subtitle.attributedbody(outformat, newline) + newline)
+			printf(outfile, "{#{stitle.tc_start.frame}}{#{stitle.tc_end.frame}}")
+			printf(outfile, "%s", stitle.attributedbody(outformat, newline) + newline)
 		end
 	end
 when 1
 	# output to SRT file
 #	printf(STDERR, "INFO: SRT output file.\n")
-	st_array.each do |subtitle|
-		subtitle.tc_start.time += shift
-		subtitle.tc_end.time += shift
+	st_array.each do |stitle|
+		stitle.tc_start.time += shift
+		stitle.tc_end.time += shift
 		if outencoding
-			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", subtitle.id.to_s + newline))
-			printf(outfile, Iconv.conv(outencoding, "UTF-8", "#{"%02d" % subtitle.tc_start.hours}:#{"%02d" % subtitle.tc_start.minutes}:#{"%02d" % subtitle.tc_start.seconds},#{"%03d" % subtitle.tc_start.millis} --> #{"%02d" % subtitle.tc_end.hours}:#{"%02d" % subtitle.tc_end.minutes}:#{"%02d" % subtitle.tc_end.seconds},#{"%03d" % subtitle.tc_end.millis} #{subtitle.coords_string}" + newline))
-			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", subtitle.attributedbody(outformat, newline) + newline))
+			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", stitle.id.to_s + newline))
+			printf(outfile, Iconv.conv(outencoding, "UTF-8", "#{"%02d" % stitle.tc_start.hours}:#{"%02d" % stitle.tc_start.minutes}:#{"%02d" % stitle.tc_start.seconds},#{"%03d" % stitle.tc_start.millis} --> #{"%02d" % stitle.tc_end.hours}:#{"%02d" % stitle.tc_end.minutes}:#{"%02d" % stitle.tc_end.seconds},#{"%03d" % stitle.tc_end.millis} #{stitle.coords_string}" + newline))
+			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", stitle.attributedbody(outformat, newline) + newline))
 			printf(outfile, Iconv.conv(outencoding, "UTF-8", newline))
 		else
-			printf(outfile, "%s", subtitle.id.to_s + newline)
-			printf(outfile, "#{"%02d" % subtitle.tc_start.hours}:#{"%02d" % subtitle.tc_start.minutes}:#{"%02d" % subtitle.tc_start.seconds},#{"%03d" % subtitle.tc_start.millis} --> #{"%02d" % subtitle.tc_end.hours}:#{"%02d" % subtitle.tc_end.minutes}:#{"%02d" % subtitle.tc_end.seconds},#{"%03d" % subtitle.tc_end.millis} #{subtitle.coords_string}" + newline)
-			printf(outfile, "%s", subtitle.attributedbody(outformat, newline) + newline)
+			printf(outfile, "%s", stitle.id.to_s + newline)
+			printf(outfile, "#{"%02d" % stitle.tc_start.hours}:#{"%02d" % stitle.tc_start.minutes}:#{"%02d" % stitle.tc_start.seconds},#{"%03d" % stitle.tc_start.millis} --> #{"%02d" % stitle.tc_end.hours}:#{"%02d" % stitle.tc_end.minutes}:#{"%02d" % stitle.tc_end.seconds},#{"%03d" % stitle.tc_end.millis} #{stitle.coords_string}" + newline)
+			printf(outfile, "%s", stitle.attributedbody(outformat, newline) + newline)
 			printf(outfile, newline)
 		end
 	end
