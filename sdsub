@@ -9,12 +9,12 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #=Usage
@@ -81,7 +81,7 @@
 # FILE: The subtitle file to process
 
 require 'getoptlong'
-require 'rdoc/usage'
+#require 'rdoc/usage'
 require 'strscan'
 
 class TimeCode
@@ -422,25 +422,25 @@ when 0
 		bodyLinesArray = sc.rest.chomp.split("|")
 		if bodyLinesArray.size > 0
 			subtitle.body = Array.new
-			bodyLinesArray.each do |line|
+			bodyLinesArray.each do |bodyline|
 				subline = SubLine.new
-				if line.include?("{y:i}")
+				if bodyline.include?("{y:i}")
 					subline.italic = true
-					line.sub!("{y:i}", "")
+					bodyline.sub!("{y:i}", "")
 				end
-				if line.include?("{y:b}")
+				if bodyline.include?("{y:b}")
 					subline.bold = true
-					line.sub!("{y:b}", "")
+					bodyline.sub!("{y:b}", "")
 				end
-				if line.include?("{y:u}")
+				if bodyline.include?("{y:u}")
 					subline.underline = true
-					line.sub!("{y:u}", "")
+					bodyline.sub!("{y:u}", "")
 				end
-				if line.include?("{y:s}")
+				if bodyline.include?("{y:s}")
 					subline.strike = true
-					line.sub!("{y:s}", "")
+					bodyline.sub!("{y:s}", "")
 				end
-				subline.text = line
+				subline.text = bodyline
 				subtitle.body.push subline
 			end
 		else
@@ -608,7 +608,7 @@ when 1
 					strike_open = false
 					line.sub!("</s>", "")
 				end
-				
+
 				subline.text = line.chomp
 				bodyLinesArray.push subline
 				if bodyLinesArray.size > 2
