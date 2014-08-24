@@ -1,0 +1,780 @@
+#!/usr/bin/ruby -w
+#=Overview
+# Subtitle Meister: perform various operations on subtitle files
+# Version 0.9.1
+#=Copyright
+# Copyright (c) 2010, Patryk "Silver Dream !" Łogiewa
+#=Copying
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#=Usage
+#  Usage: sd_sub [OPTION] ... FILE
+#
+# -e <encoding>, --input-encoding <encoding>:
+#    specify input file encoding. For list of supported
+#    encodings use 'iconv -l'
+#
+# -E <encoding>, --output-encoding <encoding>:
+#    specify output file encoding. Default: UTF-8 or no change
+#    if input encoding was neither specified nor Unicode based.
+#    For list of supported encodings use 'iconv -l'
+#
+# -f sub|srt, --input-format sub|srt:
+#    select format of the input subtitle file (default: guess)
+#
+# -F sub/txt|srt, --output-format sub/txt|srt:
+#    select format of the output file (default: SRT)
+#
+# -h, --help:
+#    show help
+#
+# -i, --ignore-errors:
+#    ignore errors when reading input file and try to correct
+#    the most typical formatting errors. Warning: this option enables
+#    only automatic correction of typical FORMATTING errors when reading.
+#    the input file. It does NOT correct the improper durations, overlaps,
+#    and other non-purely-formatting-related errors
+#
+# -o filename, --output filename:
+#    selects the file to write the output to (instead of stdout)
+#
+# --line-ends-with lf|cr|crlf:
+#    sets the line termination character to be used on output (default: LF)
+#
+# -r x, --frame-rate x:
+#    set frame rate to be used for calculations
+#
+# -s "[-]x.yyy", --shift "[-]x.yyy":
+#    set shift value in seconds to be applied
+#
+# -v, --verify:
+#    parses the file and verifies its structure
+#    printing out information on errors (if any) found
+#
+# -l, --validate:
+#    the same as above plus attempts to fix the most common errors
+#
+# -n x, --normalise x:
+#    set all subtitles duration to x seconds
+#    if overlapping with next subtitle, duration
+#    will be shortened accordingly
+#
+# -d x, --adaptive-duration x:
+#    adapt the duration of every subtitle according to the number of
+#    characters in the text lines. x is the duration of a single letter
+#    in seconds (usually fraction of) like 0.04
+#
+# -j x, --jiggle x:
+#    variate the start and end timecodes randomly within range of x s
+#    Default: 0.08s
+#
+# FILE: The subtitle file to process
+
+require 'getoptlong'
+require 'rdoc/usage'
+require 'strscan'
+
+class TimeCode
+	attr_accessor :time, :framerate
+	def hours
+		return (time / 3600).to_i
+	end
+	def minutes
+		return ((time - (self.hours * 3600)) / 60).to_i
+	end
+	def seconds
+		return ((time - self.hours * 3600) - self.minutes * 60).to_i
+	end
+	def millis
+		return ((time - time.truncate) * 1000).round
+	end
+	def frame
+		return (time * framerate).round
+	end
+end
+
+class SubTitle
+	attr_accessor :id, :tc_start, :tc_end, :coords_string, :body
+	# TODO - Find better place for this code.
+	def attributedbody(format, newline)
+		if body.size > 0
+			attributedbody = String.new
+			case format
+			when 0	# SUB/TXT format
+				body.each do |line|
+					if line.italic
+						attributedbody << "{y:i}"
+					end
+					if line.bold
+						attributedbody << "{y:b}"
+					end
+					if line.underline
+						attributedbody << "{y:u}"
+					end
+					if line.strike
+						attributedbody << "{y:s}"
+					end
+					attributedbody << line.text.delete("\r") << "|"
+				end
+			when 1 # SRT format
+				# TODO - optimise closing the tags only once if consecutive lines have the same attributes
+				body.each do |line|
+					if line.italic
+						attributedbody << "<i>"
+					end
+					if line.bold
+						attributedbody << "<b>"
+					end
+					if line.underline
+						attributedbody << "<u>"
+					end
+					if line.strike
+						attributedbody << "<s>"
+					end
+					attributedbody << line.text.delete("\r")
+					if line.strike
+						attributedbody << "</s>"
+					end
+					if line.underline
+						attributedbody << "</u>"
+					end
+					if line.bold
+						attributedbody << "</b>"
+					end
+					if line.italic
+						attributedbody << "</i>"
+					end
+					attributedbody << newline
+				end
+			end
+			return attributedbody.chop
+		else
+			printf(STDERR, "WARNING: Subtitle # %5d - Empty subtitle body!\n")
+			return nil
+		end
+	end
+end
+
+class SubLine
+	attr_accessor :text, :italic, :bold, :underline, :strike, :colour
+end
+
+class SubWord
+	attr_accessor :text, :italic, :bold, :underline, :strike, :colour
+end
+
+#
+# Default values
+#
+infilename = nil
+outfilename = nil
+inencoding = nil
+outencoding = nil
+informat = nil
+outformat = 1	# SRT of course
+newline = "\n"
+framerate_specified = false
+framerate = 24
+shift = 0
+normalise = nil
+char_duration = nil
+jiggle = nil
+ignoring_errors = false
+verification_requested = false
+validation_requested = false
+errors_fixed = false
+
+#
+# Options array
+#
+opts = GetoptLong.new(
+	[ '--help', '-h', GetoptLong::NO_ARGUMENT ],
+	[ '--ignore-errors', '-i', GetoptLong::NO_ARGUMENT ],
+	[ '--input-encoding', '-e', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--output-encoding', '-E', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--input-format', '-f', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--output-format', '-F', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--shift', '-s', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--frame-rate', '-r', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--verify', '-v', GetoptLong::NO_ARGUMENT ],
+	[ '--validate', '-l', GetoptLong::NO_ARGUMENT ],
+	[ '--normalise', '-n', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--adaptive-duration', '-d', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--first-subtitle-frame', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--last-subtitle-frame', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--first-subtitle-seconds', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--last-subtitle-seconds', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--jiggle', '-j', GetoptLong::OPTIONAL_ARGUMENT ],
+	[ '--output', '-o', GetoptLong::REQUIRED_ARGUMENT ],
+	[ '--line-ends-with', GetoptLong::REQUIRED_ARGUMENT ]
+)
+
+opts.each do |opt, arg|
+	case opt
+	when '--help'
+		RDoc::usage
+	when '--input-format'
+		arg = arg.downcase
+		if arg == "sub" || arg == "txt"
+			informat = 0
+		else
+			if arg == "srt"
+				informat = 1
+			else
+				printf(STDERR, "ERROR: Invalid input format specified!\n")
+#				RDoc::usage
+				exit
+			end
+		end
+	when '--output-format'
+		arg = arg.downcase
+		if arg == "sub" || arg == "txt"
+			outformat = 0
+		else
+			if arg == "srt"
+				outformat = 1
+			else
+				printf(STDERR, "ERROR: Invalid input format specified!\n")
+#				RDoc::usage
+				exit
+			end
+		end
+	when '--line-ends-with'
+		arg = arg.downcase
+		case arg
+		when "lf"
+			newline = "\n"
+		when "cr"
+			newline = "\r"
+		when "crlf"
+			newline = "\r\n"
+		else
+			printf(STDERR, "ERROR: Invalid line termination sequence specified!\n")
+			exit
+		end
+	when '--output'
+		if arg == ''
+			outfilename = nil
+		else
+			outfilename = arg
+		end
+	when '--shift'
+		if arg == ''
+			shift = 0
+		else
+			shift = arg.to_f
+			if shift == 0
+				printf(STDERR, "WARNING: zero or invalid shift specified: %s\n", arg)
+			end
+		end
+	when '--frame-rate'
+		if arg == ''
+			framerate = 0
+		else
+			framerate = arg.to_f
+			if framerate < 12
+				printf(STDERR, "WARNING: very low or invalid frame rate specified: %s\n", arg)
+			end
+			framerate_specified = true
+		end
+	when '--ignore-errors'
+		ignoring_errors = true
+	when '--verify'
+		verification_requested = true
+		ignoring_errors = true
+	when '--validate'
+		validation_requested = true
+		ignoring_errors = true
+	when '--normalise'
+		normalise = arg.to_f
+		if normalise < 1
+			printf(STDERR, "WARNING: normalisation to less than 1s requested.\n")
+		end
+	when '--adaptive-duration'
+		char_duration = arg.to_f
+		if char_duration < 0.02
+			printf(STDERR, "WARNING: character duration of less than 0.02s requested.\n")
+		elsif char_duration > 0.2
+			printf(STDERR, "WARNING: character duration of more than 0.2s requested.\n")
+		end
+	when '--jiggle'
+		if arg == ''
+			jiggle = 0.08
+		else
+			jiggle = arg.to_f
+			if jiggle < 0.01 || jiggle > 0.1
+				printf(STDERR, "WARNING: uncommon jiggle range of %fs requested.\n", jiggle)
+			end
+		end
+		printf(STDERR, "ERROR: jiggle not implemented yet.\n")
+		exit
+	when '--input-encoding'
+		printf(STDERR, "WARNING: input encodings not fully implemented yet. Use with caution!\n")
+		inencoding = arg.to_s
+	when '--output-encoding'
+		printf(STDERR, "WARNING: output encodings not fully implemented yet. Use with caution!\n")
+		outencoding = arg.to_s
+	end
+end
+
+if ARGV.length == 1
+	infilename = ARGV.shift
+else
+	printf(STDERR, "WARNING: reading from Standard input not fully implemented yet...\n")
+end
+
+st_counter = 1
+
+if infilename
+	infile = File.open(infilename, "r")
+else
+	infile = STDIN
+end
+
+if inencoding == nil || informat == nil
+	filehead = infile.read(4)
+	infile.rewind
+	case filehead
+	when "\377\3761\000"
+		inencoding = "UTF-16LE" unless inencoding
+		informat = 1 unless informat
+		infile.read(2)	# Skipping the BOM (Byte-Order-Mark)
+	when "\377\376{\000"
+		inencoding = "UTF-16LE" unless inencoding
+		informat = 0 unless informat
+		infile.read(2)	# Skipping the BOM (Byte-Order-Mark)
+	when "\376\377\0001"
+		inencoding = "UTF-16BE" unless inencoding
+		informat = 1 unless informat
+		infile.read(2)	# Skipping the BOM (Byte-Order-Mark)
+	when "\376\377\000{"
+		inencoding = "UTF-16BE" unless inencoding
+		informat = 0 unless informat
+		infile.read(2)	# Skipping the BOM (Byte-Order-Mark)
+	when "\357\273\2771"
+		#	inencoding = "UTF-8" unless inencoding
+		informat = 1 unless informat
+		infile.read(3)	# Skipping the BOM (Byte-Order-Mark)
+	when "\357\273\277{"
+		#	inencoding = "UTF-8" unless inencoding
+		informat = 0 unless informat
+		infile.read(3)	# Skipping the BOM (Byte-Order-Mark)
+	when /^1\r\n\d/
+		informat = 1 unless informat
+	when /^1\n\d\d/
+		informat = 1 unless informat
+	when /^\{\d\}\{/
+		informat = 0 unless informat
+	when /^\{\d\d\}/
+		informat = 0 unless informat
+	when /^\{\d\d\d/
+		informat = 0 unless informat
+	else
+		printf(STDERR, "ERROR: input format and encoding could not be deduced. Invalid input file?\n")
+	end
+end
+
+if inencoding || outencoding
+	require 'iconv'
+	inencoding += "//TRANSLIT" if inencoding == "ASCII"
+	outencoding += "//TRANSLIT" if outencoding == "ASCII"
+end
+
+st_array = Array.new
+case informat
+when 0
+	# process SUB / TXT input
+#	printf(STDERR, "INFO: SUB/TXT input file.\n")
+	while (input = infile.gets)
+		if inencoding
+			input += infile.read(1) if inencoding == "UTF-16LE"
+			line = Iconv.conv("UTF-8", inencoding, input)
+		else
+			line = input
+		end
+		subtitle = SubTitle.new
+		subtitle.id = st_counter
+		tc_start = TimeCode.new
+		tc_end = TimeCode.new
+		tc_start.framerate = framerate
+		tc_end.framerate = framerate
+		sc = StringScanner.new(line)
+		tc_start.time = sc.scan(/\{\d*\}/).delete("{}").to_f / framerate
+		if tc_start.time == 0
+			printf(STDERR, "WARNING: Subtitle #%d start time equals zero! Corrupt subtitle file?\n", subtitle.id) unless subtitle.id == 1
+		end
+		tc_end.time = sc.scan(/\{\d*\}/).delete("{}").to_f / framerate
+		if tc_end.time == 0
+			printf(STDERR, "WARNING: Subtitle #%d end time equals zero! Corrupt subtitle file?\n", subtitle.id)
+		end
+		subtitle.tc_start = tc_start
+		subtitle.tc_end = tc_end
+		bodyLinesArray = sc.rest.chomp.split("|")
+		if bodyLinesArray.size > 0
+			subtitle.body = Array.new
+			bodyLinesArray.each do |line|
+				subline = SubLine.new
+				if line.include?("{y:i}")
+					subline.italic = true
+					line.sub!("{y:i}", "")
+				end
+				if line.include?("{y:b}")
+					subline.bold = true
+					line.sub!("{y:b}", "")
+				end
+				if line.include?("{y:u}")
+					subline.underline = true
+					line.sub!("{y:u}", "")
+				end
+				if line.include?("{y:s}")
+					subline.strike = true
+					line.sub!("{y:s}", "")
+				end
+				subline.text = line
+				subtitle.body.push subline
+			end
+		else
+			printf(STDERR, "Line # %5d - WARNING: empty subtitle?\n", st_counter)
+		end
+		st_array.push subtitle
+		st_counter += 1
+	end
+when 1
+	# process SRT input
+#	printf(STDERR, "INFO: SRT input file.\n")
+	redoing = false
+	line_counter = 0
+	expectation = 0
+	# 0 - id
+	# 1 - time codes and coords
+	# 2 - body lines
+	while (input = infile.gets)
+		if redoing
+			redoing = false
+		else
+			if inencoding
+				input += infile.read(1) if inencoding == "UTF-16LE"
+				line = Iconv.conv("UTF-8", inencoding, input)
+			else
+				line = input
+			end
+			line_counter += 1
+		end
+
+		case expectation
+		when 0	# expecting subtitle id
+			if line.strip.chomp == ""
+				printf(STDERR, "Line # %5d - WARNING: empty line instead of subtitile ID #%d\n", line_counter, st_counter)
+				next
+			end
+
+			if line.to_i != st_counter
+				tc_index = line.index(/\d\d:\d\d:\d\d,\d\d\d --> \d\d:\d\d:\d\d,\d\d\d.*/)
+				if tc_index
+					case tc_index
+					when 0	# seems we have timecode instead of ID
+						printf(STDERR, "Line # %5d - ERROR: timecode line instead of ID in subtitle #%d\n", line_counter, st_counter)
+						if ignoring_errors
+							subtitle = SubTitle.new
+							subtitle.id = st_counter
+							expectation = 1
+							redoing = true
+							redo
+						end
+					else	# looks like we have ID merged with timecodes
+						printf(STDERR, "Line # %5d - ERROR: looks like ID line is merged with timecode line in subtitle #%d\n", line_counter, st_counter)
+						if ignoring_errors
+							subtitle = SubTitle.new
+							subtitle.id = line[0...tc_index].to_i
+							if subtitle.id != st_counter
+								printf(STDERR, "Line # %5d - ERROR: subtitle ID out of order: got %s, expected %d\n", line_counter, line.chomp, st_counter)
+							end
+							line = line.slice(/\d\d:\d\d:\d\d,\d\d\d --> \d\d:\d\d:\d\d,\d\d\d.*/)
+							expectation = 1
+							redoing = true
+							redo
+						end
+					end
+				end
+				printf(STDERR, "Line # %5d - ERROR: subtitle ID out of order: got %s, expected %d\n", line_counter, line.chomp, st_counter)
+				exit unless ignoring_errors
+			end
+
+			subtitle = SubTitle.new
+			subtitle.id = line.to_i
+			expectation = 1
+
+		when 1	# expecting timecodes and coords
+			if line.strip.chomp == ""
+				printf(STDERR, "Line # %5d - WARNING: empty line instead of time codes in subtitle #%d\n", line_counter, st_counter)
+				next
+			end
+			if line[2,1] == ":" && line[5,1] == ":" && line[8,1] == "," && line[12,5] == " --> " && line[19,1] == ":" && line[22,1] == ":" && line[25,1] == ","
+				tc_start = TimeCode.new
+				tc_end = TimeCode.new
+				tc_start.framerate = framerate
+				tc_end.framerate = framerate
+				tc_start.time = ((line[0,2].to_i * 3600) + (line[3,2].to_i * 60) + line[6,2].to_i).to_f + (line[9,3].to_f / 1000)
+				tc_end.time = ((line[17,2].to_i * 3600) + (line[20,2].to_i * 60) + line[23,2].to_i).to_f + (line[26,3].to_f / 1000)
+				subtitle.tc_start = tc_start
+				subtitle.tc_end = tc_end
+			else
+				printf(STDERR, "Line # %5d - ERROR: Timecodes line invalid - corrupt file?\n", line_counter)
+				exit unless ignoring_errors
+			end
+			subtitle.coords_string = line.chomp.slice(30..line.chomp.length)
+			bodyLinesArray = Array.new
+			italic_open, bold_open, underline_open, strike_open = false, false, false, false
+			expectation = 2
+		when 2	# expecting body line
+			if line.strip.chomp == ""
+				if bodyLinesArray.size > 0
+					# TODO - process text attributes accordingly here
+					subtitle.body = bodyLinesArray
+					st_array.push subtitle
+					st_counter += 1
+					expectation = 0
+				else
+					printf(STDERR, "Line # %5d - WARNING: empty line instead of body text in subtitle #%d\n", line_counter, st_counter)
+					next
+				end
+			else
+				subline = SubLine.new
+				# TODO - check for proper tags order and nesting!
+				# TODO - find a better place for this parsing part of code
+				# ITALIC
+				if line.include?("<i>")
+					italic_open = true
+					subline.italic = true
+					line.sub!("<i>", "")
+				else
+					if italic_open
+						subline.italic = true
+					end
+				end
+				if line.include?("</i>")
+					italic_open = false
+					line.sub!("</i>", "")
+				end
+				# BOLD
+				if line.include?("<b>")
+					bold_open = true
+					subline.bold = true
+					line.sub!("<b>", "")
+				else
+					if bold_open
+						subline.bold = true
+					end
+				end
+				if line.include?("</b>")
+					bold_open = false
+					line.sub!("</b>", "")
+				end
+				# UNDERLINE
+				if line.include?("<u>")
+					underline_open = true
+					subline.underline = true
+					line.sub!("<u>", "")
+				else
+					if underline_open
+						subline.underline = true
+					end
+				end
+				if line.include?("</u>")
+					underline_open = false
+					line.sub!("</u>", "")
+				end
+				# STRIKE
+				if line.include?("<s>")
+					strike_open = true
+					subline.strike = true
+					line.sub!("<s>", "")
+				else
+					if strike_open
+						subline.strike = true
+					end
+				end
+				if line.include?("</s>")
+					strike_open = false
+					line.sub!("</s>", "")
+				end
+				
+				subline.text = line.chomp
+				bodyLinesArray.push subline
+				if bodyLinesArray.size > 2
+					printf(STDERR, "Line # %5d - WARNING: more than two body lines in subtitle #%d\n", line_counter, st_counter)
+				end
+			end
+		end
+	end
+end
+
+infile.close
+
+if verification_requested || validation_requested
+	st_counter = 1
+	st_array.each do |subtitle|
+		# checking start versus end timecodes
+		if subtitle.tc_start.time >= subtitle.tc_end.time
+			printf(STDERR, "ERROR: subtitle #%d start vs. end timecode invalid", st_counter)
+			if validation_requested
+				subtitle.tc_end.time = subtitle.tc_start.time + 0.1
+				printf(STDERR, "... Fixed.\n")
+				errors_fixed = true
+				redo
+			else
+				printf("\n")
+			end
+		else
+			if subtitle.tc_end.time - subtitle.tc_start.time < 0.1
+				printf(STDERR, "WARNING: subtitle #%d duration of %.3fs seems too short!\n", st_counter, subtitle.tc_end.time - subtitle.tc_start.time)
+			end
+		end
+		# checking display overlaps
+		unless st_counter > st_array.size - 2	# last element of the array (size = x, last index = x-1, one before last = x-2)
+			if subtitle.tc_end.time >= st_array[st_counter].tc_start.time
+				printf(STDERR, "ERROR: subtitle #%d overlaps with subtitle #%d", st_counter, st_counter + 1)
+				if validation_requested
+					st_array[st_counter].tc_start.time = subtitle.tc_end.time + 0.05
+					printf(STDERR, "... Fixed.\n")
+					errors_fixed = true
+					redo
+				else
+					printf("\n")
+				end
+			end
+		end
+		# checking subtitle IDs
+		if subtitle.id != st_counter
+			printf(STDERR, "ERROR: subtitle ID out of order. Found %d, expected %d", subtitle.id, st_counter)
+			if validation_requested
+				subtitle.id = st_counter
+				printf(STDERR, "... Fixed.\n")
+				errors_fixed = true
+				redo
+			else
+				printf("\n")
+			end
+		end
+		st_counter += 1
+	end
+	exit unless errors_fixed
+end
+
+if normalise
+	st_counter = 1
+	st_array.each do |subtitle|
+		if st_counter <= st_array.size - 2	# not the last subtitle (size = x, last index = x-1, one before last = x-2)
+			if subtitle.tc_start.time + normalise >= st_array[st_counter].tc_start.time
+				temp = st_array[st_counter].tc_start.time - 0.1
+				printf(STDERR, "WARNING: subtitle #%d not normalised to %fs. %fs used to avoid overlap\n", st_counter, normalise, temp - subtitle.tc_start.time)
+				subtitle.tc_end.time = temp
+			else
+				subtitle.tc_end.time = subtitle.tc_start.time + normalise
+			end
+		else
+			subtitle.tc_end.time = subtitle.tc_start.time + normalise
+		end
+		st_counter += 1
+	end
+end
+
+if char_duration
+	if normalise
+		printf(STDERR, "WARNING: both 'normalise' and 'adaptive duration' requested. Normalisation will be overwritten.\n")
+	end
+	st_counter = 1
+	st_array.each do |subtitle|
+		if st_counter <= st_array.size - 2	# not the last subtitle (size = x, last index = x-1, one before last = x-2)
+			if subtitle.tc_start.time + subtitle.body.length * char_duration >= st_array[st_counter].tc_start.time
+				temp = st_array[st_counter].tc_start.time - 0.1
+				printf(STDERR, "WARNING: subtitle #%d not adapted. %fs used to avoid overlap\n", st_counter, temp - subtitle.tc_start.time)
+				subtitle.tc_end.time = temp
+			else
+				subtitle.tc_end.time = subtitle.tc_start.time + subtitle.body.length * char_duration
+			end
+		else
+			subtitle.tc_end.time = subtitle.tc_start.time + subtitle.body.length * char_duration
+		end
+		st_counter += 1
+	end
+end
+
+# WARNING: not implemented yet! Code below is Boguś!
+if jiggle
+	st_counter = 1
+	st_array.each do |subtitle|
+		if st_array > 1	# not the first subtitle
+			jiggle_value = rand * jiggle
+			jiggle_value = -1 * jiggle_value if rand(2)
+			if subtitle.tc_start.time + jiggle_value <= st_array[st_counter - 2].tc_end.time
+				subtitle.tc_start.time = st_array[st_counter - 2].tc_end.time + 0.1
+			end
+		else
+		end
+		if st_counter <= st_array.size - 2	# not the last subtitle (size = x, last index = x-1, one before last = x-2)
+			jiggle_value = rand * jiggle
+			jiggle_value = -1 * jiggle_value if rand(2)
+		else
+		end
+		st_counter += 1
+	end
+end
+
+if outfilename
+	outfile = File.open(outfilename, "w")
+else
+	outfile = STDOUT
+end
+
+case outformat
+when 0
+	# output to SUB file
+#	printf(STDERR, "INFO: SUB/TXT output file.\n")
+	unless framerate_specified
+		printf(STDERR, "WARNING: Frame rate not specified for SUB/TXT output! Using default rate of: %d fps\n", framerate)
+	end
+	st_array.each do |subtitle|
+		subtitle.tc_start.time += shift
+		subtitle.tc_end.time += shift
+		if outencoding
+			printf(outfile, Iconv.conv(outencoding, "UTF-8", "{#{subtitle.tc_start.frame}}{#{subtitle.tc_end.frame}}"))
+			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", subtitle.attributedbody(outformat, newline) + newline))
+		else
+			printf(outfile, "{#{subtitle.tc_start.frame}}{#{subtitle.tc_end.frame}}")
+			printf(outfile, "%s", subtitle.attributedbody(outformat, newline) + newline)
+		end
+	end
+when 1
+	# output to SRT file
+#	printf(STDERR, "INFO: SRT output file.\n")
+	st_array.each do |subtitle|
+		subtitle.tc_start.time += shift
+		subtitle.tc_end.time += shift
+		if outencoding
+			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", subtitle.id.to_s + newline))
+			printf(outfile, Iconv.conv(outencoding, "UTF-8", "#{"%02d" % subtitle.tc_start.hours}:#{"%02d" % subtitle.tc_start.minutes}:#{"%02d" % subtitle.tc_start.seconds},#{"%03d" % subtitle.tc_start.millis} --> #{"%02d" % subtitle.tc_end.hours}:#{"%02d" % subtitle.tc_end.minutes}:#{"%02d" % subtitle.tc_end.seconds},#{"%03d" % subtitle.tc_end.millis} #{subtitle.coords_string}" + newline))
+			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", subtitle.attributedbody(outformat, newline) + newline))
+			printf(outfile, Iconv.conv(outencoding, "UTF-8", newline))
+		else
+			printf(outfile, "%s", subtitle.id.to_s + newline)
+			printf(outfile, "#{"%02d" % subtitle.tc_start.hours}:#{"%02d" % subtitle.tc_start.minutes}:#{"%02d" % subtitle.tc_start.seconds},#{"%03d" % subtitle.tc_start.millis} --> #{"%02d" % subtitle.tc_end.hours}:#{"%02d" % subtitle.tc_end.minutes}:#{"%02d" % subtitle.tc_end.seconds},#{"%03d" % subtitle.tc_end.millis} #{subtitle.coords_string}" + newline)
+			printf(outfile, "%s", subtitle.attributedbody(outformat, newline) + newline)
+			printf(outfile, newline)
+		end
+	end
+end
+
+if outfilename
+	outfile.close
+end

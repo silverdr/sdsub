@@ -1,0 +1,44 @@
+(silverdr)
+- broken SUB files with empty start or end frame do not crash the program anymore
+
+2010-12-12 (silverdr)
+=====================
+Bugfixes:
+- corrected parsing of timecodes from SUB/TXT files
+- corrected (actually implemented) parsing of multiple
+  body lines from SUB/TXT files
+
+Additions:
+- preliminary attributes parsing from / to both SRT and SUB/TXT files.
+  Currently only four attributes are being supported (italic, bold, underline, strike)
+  and not much is being done in terms of order and nesting verification.
+  Attributes are supported currently on a line by line base only. Single words can not
+  be attributed, but it seems to be the most common approach anyway.
+- line termination sequence can now be specified as either "LF", "CR" or "CRLF"
+
+Other:
+- renamed the tool from "sd_sub" to "sdsub" for easier typing
+
+2010-02-15 (silverdr)
+=====================
+- automatic corrections for the following formatting errors in SRT files:
+
+Issue 2: Subtitle ID & timecodes merged
+1:	1
+2:	00:01:10,070 --> 00:01:12,063
+3:	Hello world!
+4:
+5:	200:01:13,083 --> 00:01:15,085
+6:	Bye world!
+7:
+
+Issue 9: Subtitle ID missing
+1:	1
+2:	00:01:10,070 --> 00:01:12,063
+3:	Hello world!
+4:
+5:	00:01:13,083 --> 00:01:15,085
+6:	Bye world!
+7:
+
+Beta - please use with care!
