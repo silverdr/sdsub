@@ -1,9 +1,9 @@
 #!/usr/bin/ruby -w
 #=Overview
 # Subtitle Meister: perform various operations on subtitle files
-# Version 0.9.1
+# Version 0.9.2
 #=Copyright
-# Copyright (c) 2010, Patryk "Silver Dream !" Łogiewa
+# Copyright (c) 2010-2016, Patryk "Silver Dream !" Łogiewa
 #=Copying
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -81,8 +81,21 @@
 # FILE: The subtitle file to process
 
 require 'getoptlong'
-#require 'rdoc/usage'
 require 'strscan'
+
+module SD
+	def SD::usage( exit_code )
+		File::open( $0, 'r').readlines.each_with_index do | line, idx |
+			next if idx == 0
+			if( line =~ /^#/ )
+				puts line.gsub(/^#\ ?/,'')
+			else
+				puts #RDoc adds extra line so we do too
+				exit( exit_code )
+			end
+		end
+	end
+end
 
 class TimeCode
 	attr_accessor :time, :framerate
@@ -222,7 +235,7 @@ opts = GetoptLong.new(
 opts.each do |opt, arg|
 	case opt
 	when '--help'
-		RDoc::usage
+		SD::usage(true)
 	when '--input-format'
 		arg = arg.downcase
 		if arg == "sub" || arg == "txt"
@@ -232,7 +245,7 @@ opts.each do |opt, arg|
 				informat = 1
 			else
 				printf(STDERR, "ERROR: Invalid input format specified!\n")
-#				RDoc::usage
+				SD::usage(false)
 				exit
 			end
 		end
@@ -244,8 +257,8 @@ opts.each do |opt, arg|
 			if arg == "srt"
 				outformat = 1
 			else
-				printf(STDERR, "ERROR: Invalid input format specified!\n")
-#				RDoc::usage
+				printf(STDERR, "ERROR: Invalid output format specified!\n")
+				SD::usage(false)
 				exit
 			end
 		end
@@ -294,7 +307,7 @@ opts.each do |opt, arg|
 		ignoring_errors = true
 	when '--validate'
 		validation_requested = true
-		ignoring_errors = true
+		ignoring_errors = true # CHECKME - shouldn't this be false?
 	when '--normalise'
 		normalise = arg.to_f
 		if normalise < 1
@@ -385,7 +398,6 @@ if inencoding == nil || informat == nil
 end
 
 if inencoding || outencoding
-	require 'iconv'
 	inencoding += "//TRANSLIT" if inencoding == "ASCII"
 	outencoding += "//TRANSLIT" if outencoding == "ASCII"
 end
@@ -398,7 +410,7 @@ when 0
 	while (input = infile.gets)
 		if inencoding
 			input += infile.read(1) if inencoding == "UTF-16LE"
-			line = Iconv.conv("UTF-8", inencoding, input)
+			line = input.encode("UTF-8", inencoding)
 		else
 			line = input
 		end
@@ -464,7 +476,7 @@ when 1
 		else
 			if inencoding
 				input += infile.read(1) if inencoding == "UTF-16LE"
-				line = Iconv.conv("UTF-8", inencoding, input)
+				line = input.encode("UTF-8", inencoding)
 			else
 				line = input
 			end
@@ -748,8 +760,8 @@ when 0
 		stitle.tc_start.time += shift
 		stitle.tc_end.time += shift
 		if outencoding
-			printf(outfile, Iconv.conv(outencoding, "UTF-8", "{#{stitle.tc_start.frame}}{#{stitle.tc_end.frame}}"))
-			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", stitle.attributedbody(outformat, newline) + newline))
+			printf(outfile, "{#{stitle.tc_start.frame}}{#{stitle.tc_end.frame}}".encode(outencoding, "UTF-8"))
+			printf(outfile, "%s", (stitle.attributedbody(outformat, newline) + newline).encode(outencoding, "UTF-8"))
 		else
 			printf(outfile, "{#{stitle.tc_start.frame}}{#{stitle.tc_end.frame}}")
 			printf(outfile, "%s", stitle.attributedbody(outformat, newline) + newline)
@@ -762,10 +774,10 @@ when 1
 		stitle.tc_start.time += shift
 		stitle.tc_end.time += shift
 		if outencoding
-			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", stitle.id.to_s + newline))
-			printf(outfile, Iconv.conv(outencoding, "UTF-8", "#{"%02d" % stitle.tc_start.hours}:#{"%02d" % stitle.tc_start.minutes}:#{"%02d" % stitle.tc_start.seconds},#{"%03d" % stitle.tc_start.millis} --> #{"%02d" % stitle.tc_end.hours}:#{"%02d" % stitle.tc_end.minutes}:#{"%02d" % stitle.tc_end.seconds},#{"%03d" % stitle.tc_end.millis} #{stitle.coords_string}" + newline))
-			printf(outfile, "%s", Iconv.conv(outencoding, "UTF-8", stitle.attributedbody(outformat, newline) + newline))
-			printf(outfile, Iconv.conv(outencoding, "UTF-8", newline))
+			printf(outfile, "%s", (stitle.id.to_s + newline).encode(outencoding, "UTF-8"))
+			printf(outfile, ("#{"%02d" % stitle.tc_start.hours}:#{"%02d" % stitle.tc_start.minutes}:#{"%02d" % stitle.tc_start.seconds},#{"%03d" % stitle.tc_start.millis} --> #{"%02d" % stitle.tc_end.hours}:#{"%02d" % stitle.tc_end.minutes}:#{"%02d" % stitle.tc_end.seconds},#{"%03d" % stitle.tc_end.millis} #{stitle.coords_string}" + newline).encode(outencoding, "UTF-8"))
+			printf(outfile, "%s", (stitle.attributedbody(outformat, newline) + newline).encode(outencoding, "UTF-8"))
+			printf(outfile, newline.encode(outencoding, "UTF-8"))
 		else
 			printf(outfile, "%s", stitle.id.to_s + newline)
 			printf(outfile, "#{"%02d" % stitle.tc_start.hours}:#{"%02d" % stitle.tc_start.minutes}:#{"%02d" % stitle.tc_start.seconds},#{"%03d" % stitle.tc_start.millis} --> #{"%02d" % stitle.tc_end.hours}:#{"%02d" % stitle.tc_end.minutes}:#{"%02d" % stitle.tc_end.seconds},#{"%03d" % stitle.tc_end.millis} #{stitle.coords_string}" + newline)
